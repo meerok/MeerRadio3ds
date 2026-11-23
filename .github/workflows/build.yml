@@ -25,7 +25,7 @@ jobs:
           wget -q https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip -O makerom.zip
           unzip -o -q makerom.zip -d makerom
           install -m755 "$(find makerom -type f -name makerom | head -n1)" /usr/local/bin/makerom
-          wget -q https://github.com/Steveice10/bannertool/releases/download/1.2.0/bannertool.zip -O bannertool.zip
+          wget -q https://github.com/diasurgical/bannertool/releases/download/1.2.0/bannertool.zip -O bannertool.zip
           unzip -o -q bannertool.zip -d bannertool
           install -m755 "$(find bannertool -type f -path '*linux-x86_64*' -name bannertool | head -n1)" /usr/local/bin/bannertool
 

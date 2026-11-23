@@ -33,6 +33,12 @@ On your 3DS open **FBI > Remote Install > Scan QR Code** and point the camera at
 
 Meer Radio then shows up on your HOME Menu.
 
+### Homebrew Launcher (.3dsx)
+
+1. Download `MeerRadio.3dsx` from the [latest release](https://github.com/meerok/MeerRadio3ds/releases/latest).
+2. Copy it to `sdmc:/3ds/` on your SD card.
+3. Open the Homebrew Launcher and pick Meer Radio.
+
 > **Before you start:** you need custom firmware (Luma3DS) and a DSP dump. Run **DSP1** once so `sdmc:/3ds/dspfirm.cdc` exists, otherwise homebrew has no sound.
 
 ---
@@ -46,7 +52,7 @@ The 3DS has no AM/FM radio chip, so Meer Radio plays real AM and FM stations fro
 | | |
 |---|---|
 | 📻 **FM, AM and Favorites** | A frequency dial with a sliding needle and a marker for every station |
-| 📡 **SCAN** | Loads hundreds of real AM/FM stations for your country from radio-browser.info |
+| 📡 **SCAN** | Loads real AM/FM stations for any of 80 countries from radio-browser.info |
 | 🎵 **Now playing** | Song titles from the station scroll across the LCD |
 | 📊 **Visualizer** | 16-band spectrum meter with peak caps and a speaker grille that pulses with the bass |
 | 🌫️ **Tuning static** | Soft static while a station locks on, like a real radio |
@@ -70,7 +76,9 @@ The 3DS has no AM/FM radio chip, so Meer Radio plays real AM and FM stations fro
 
 ## Picking your country
 
-The first launch scans Canadian stations. To change that, tap the **@CA** button at the top of the touch screen until your country shows (US, GB, AU, NZ, IE, DE, FR and more), then tap **SCAN**.
+On first launch Meer Radio picks your country from your 3DS's system settings and scans its stations. To change it, tap the country button at the top of the touch screen and pick from the list (Philippines, Chile, Sweden, Brazil and 75 more). Picking a country clears the old stations and scans the new ones.
+
+Only stations with a frequency in their name or tags show up, so some countries have more than others.
 
 ## Adding your own stations
 
@@ -90,6 +98,11 @@ Streams need to be **MP3** (plain HTTP/HTTPS, Shoutcast/Icecast, or a .pls/.m3u 
 | `/3ds/MeerRadio/stations.txt` | Your station list, edit freely |
 | `/3ds/MeerRadio/scanned.txt` | Stations from the last SCAN, replaced on every scan |
 | `/3ds/MeerRadio/settings.txt` | Volume, country, favorites and last station. Set `static=0` to turn off tuning static |
+| `/3ds/MeerRadio/log.txt` | What the app was doing, handy to attach to a bug report |
+
+## Reporting a crash
+
+If Meer Radio crashes, take a photo of the Luma3DS crash screen and post it with your `log.txt` in an issue. The **PC** and **LR** values show exactly where it happened.
 
 ---
 

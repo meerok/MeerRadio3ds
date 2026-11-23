@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install 3DS libraries
-        run: dkp-pacman -Sy --noconfirm --needed 3ds-curl 3ds-mbedtls 3ds-zlib 3ds-mpg123
+        run: dkp-pacman -S --noconfirm --needed 3ds-curl 3ds-mbedtls 3ds-zlib 3ds-mpg123 || echo "package server unavailable, using libraries already in the image"
       - name: Build
         run: make
       - name: Look up addresses

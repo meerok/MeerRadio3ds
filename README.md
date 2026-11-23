@@ -104,7 +104,7 @@ To build on your own computer:
    ```
    sudo dkp-pacman -S 3ds-dev 3ds-curl 3ds-mbedtls 3ds-zlib 3ds-mpg123
    ```
-3. Put [makerom](https://github.com/3DSGuy/Project_CTR/releases) and [bannertool](https://github.com/Steveice10/bannertool/releases) on your PATH.
+3. Put [makerom](https://github.com/3DSGuy/Project_CTR/releases) and [bannertool](https://github.com/diasurgical/bannertool/releases) on your PATH.
 4. Run `make cia`.
 
 Built with libctru, citro2d, libcurl, mbedTLS and libmpg123.

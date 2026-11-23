@@ -26,6 +26,7 @@ typedef struct {
 extern Station  g_st[MAX_STATIONS];
 extern int      g_nst;
 extern Settings g_set;
+extern bool     g_first_run;   /* no settings file yet */
 
 void stations_init(void);
 void settings_save(void);
@@ -36,6 +37,7 @@ bool parse_freq(const char *name, Band *band, float *freq);
 
 typedef enum { SCAN_IDLE, SCAN_RUNNING, SCAN_DONE, SCAN_FAILED } ScanState;
 bool        scan_has_cache(void);
+void        scan_clear(void);
 void        scan_start(void);
 ScanState   scan_state(void);
 int         scan_found(void);

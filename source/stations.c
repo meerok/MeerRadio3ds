@@ -27,6 +27,7 @@
 Station  g_st[MAX_STATIONS];
 int      g_nst = 0;
 Settings g_set;
+bool     g_first_run = false;
 
 static char favs[MAX_FAVS][384];
 static int nfavs = 0;
@@ -241,7 +242,7 @@ static void settings_load(void) {
     g_set.static_on = true;
     nfavs = 0;
     FILE *f = fopen(SETTINGS_FILE, "r");
-    if (!f) return;
+    if (!f) { g_first_run = true; return; }
     char line[600];
     while (fgets(line, sizeof line, f)) {
         trim(line);
@@ -299,7 +300,7 @@ static size_t buf_cb(char *p, size_t sz, size_t nm, void *u) {
     if (b->n + L + 1 > b->cap) {
         size_t nc = b->cap ? b->cap * 2 : 256 * 1024;
         while (nc < b->n + L + 1) nc *= 2;
-        if (nc > 12 * 1024 * 1024) return 0;
+        if (nc > 6 * 1024 * 1024) return 0;
         char *nd = (char *)realloc(b->d, nc);
         if (!nd) return 0;
         b->d = nd;
@@ -367,7 +368,7 @@ static void scan_main(void *arg) {
         char url[300];
         snprintf(url, sizeof url,
                  "https://%s/json/stations/search?countrycode=%s&codec=MP3&hidebroken=true"
-                 "&order=clickcount&reverse=true&limit=1500",
+                 "&order=clickcount&reverse=true&limit=1000",
                  hosts[h], s_country);
         snprintf(s_msg, sizeof s_msg, "Contacting radio directory...");
         b.n = 0;
@@ -407,6 +408,10 @@ static void scan_main(void *arg) {
         const char *u = strstr(p, "\"url_resolved\":\"");
         if (!u || (nx && u > nx)) continue;
         json_read(u + 16, url, sizeof url);
+        /* tags sometimes carry the frequency when the name doesn't ("news,95.3 fm") */
+        char tags[256] = "";
+        const char *tg = strstr(u, "\"tags\":\"");
+        if (tg && (!nx || tg < nx)) json_read(tg + 8, tags, sizeof tags);
         if (strncasecmp(url, "http", 4)) continue;
         size_t ul = strlen(url);
         if (ul >= 384 || (ul > 5 && !strcasecmp(url + ul - 5, ".m3u8"))) continue;
@@ -417,7 +422,11 @@ static void scan_main(void *arg) {
         trim(st.name);
         for (char *q = st.name; *q; q++) if (*q == '|') *q = '/';
         if (!st.name[0]) continue;
-        if (!parse_freq(st.name, &st.band, &st.freq)) continue;
+        if (!parse_freq(st.name, &st.band, &st.freq)) {
+            char ft[256];
+            fold_ascii(tags, ft, sizeof ft);
+            if (!ft[0] || !parse_freq(ft, &st.band, &st.freq)) continue;
+        }
         snprintf(st.url, sizeof st.url, "%s", url);
         st.scanned = true;
         if (is_dup(s_res, s_nres, &st)) continue;
@@ -441,6 +450,15 @@ static void scan_main(void *arg) {
     s_state = SCAN_DONE;
 }
 
+/* Drops every scanned station (used when the country changes) */
+void scan_clear(void) {
+    int w = 0;
+    for (int i = 0; i < g_nst; i++)
+        if (!g_st[i].scanned) g_st[w++] = g_st[i];
+    g_nst = w;
+    remove(SCANNED_FILE);
+}
+
 bool scan_has_cache(void) {
     FILE *f = fopen(SCANNED_FILE, "r");
     if (!f) return false;
@@ -458,7 +476,7 @@ void scan_start(void) {
     s_state = SCAN_RUNNING;
     s32 prio = 0x30;
     svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
-    Thread t = threadCreate(scan_main, NULL, 128 * 1024, prio + 2 > 0x3F ? 0x3F : prio + 2, -2, true);
+    Thread t = threadCreate(scan_main, NULL, 256 * 1024, prio + 2 > 0x3F ? 0x3F : prio + 2, -2, true);
     if (!t) { snprintf(s_msg, sizeof s_msg, "Couldn't start scan"); s_state = SCAN_FAILED; }
 }
 

@@ -38,7 +38,17 @@ static volatile int  g_bitrate = 0, g_chans = 0, g_pct = 0;
 static volatile float g_vol = 0.8f;
 static volatile bool g_static = true;
 static volatile bool g_quit = false;
+static volatile bool g_suspended = false;   /* HOME Menu / sleep: DSP belongs to the system */
 static char g_title[256];
+
+/* Old connections stuck in DNS or a slow connect can pile up when you flick
+ * through stations quickly; cap them and start the newest when one frees up. */
+#define MAX_NET_THREADS 3
+#define NET_STACK   (160 * 1024)
+#define DEC_STACK   (128 * 1024)
+static volatile int g_net_alive = 0;
+static char g_pending_url[512];
+static volatile bool g_pending = false;
 static char g_err[128];
 
 static Thread dec_thread;
@@ -354,6 +364,9 @@ static void net_main(void *arg) {
 out:
     free(s->pl);
     free(s);
+    LightLock_Lock(&lock);
+    g_net_alive--;
+    LightLock_Unlock(&lock);
 }
 
 /* ------------------------------------------------------------- decoding */
@@ -465,6 +478,7 @@ static void dec_main(void *arg) {
     configure(rate, chans);
 
     while (!g_quit) {
+        if (g_suspended) { svcSleepThread(20 * 1000000LL); continue; }
         u32 gen = g_gen;
         if (gen != my_gen) {
             my_gen = gen;
@@ -594,8 +608,8 @@ bool player_init(void) {
     s32 dprio = main_prio - 1;
     if (dprio < 0x18) dprio = 0x18;
     /* New 3DS: put decoding on core 2; fall back to the app core on Old 3DS */
-    dec_thread = threadCreate(dec_main, NULL, 64 * 1024, dprio, 2, false);
-    if (!dec_thread) dec_thread = threadCreate(dec_main, NULL, 64 * 1024, dprio, -2, false);
+    dec_thread = threadCreate(dec_main, NULL, DEC_STACK, dprio, 2, false);
+    if (!dec_thread) dec_thread = threadCreate(dec_main, NULL, DEC_STACK, dprio, -2, false);
     return dec_thread != NULL;
 }
 
@@ -618,13 +632,38 @@ void player_exit(void) {
     free(ring);
 }
 
+static void start_net(const char *url) {
+    Session *s = (Session *)calloc(1, sizeof(Session));
+    if (!s) {
+        LightLock_Lock(&lock);
+        snprintf(g_err, sizeof g_err, "Out of memory");
+        g_net_done = true;
+        LightLock_Unlock(&lock);
+        return;
+    }
+    LightLock_Lock(&lock);
+    s->gen = g_gen;
+    g_net_alive++;
+    LightLock_Unlock(&lock);
+    snprintf(s->url, sizeof s->url, "%s", url);
+
+    s32 nprio = main_prio + 1;
+    if (nprio > 0x3F) nprio = 0x3F;
+    Thread t = threadCreate(net_main, s, NET_STACK, nprio, -2, true);
+    if (!t) {
+        LightLock_Lock(&lock);
+        g_net_alive--;
+        snprintf(g_err, sizeof g_err, "Couldn't start network thread");
+        g_net_done = true;
+        LightLock_Unlock(&lock);
+        free(s);
+    }
+}
+
 void player_play(const char *url) {
     if (!dsp_ok || !url || !url[0]) return;
-    Session *s = (Session *)calloc(1, sizeof(Session));
-    if (!s) return;
     LightLock_Lock(&lock);
     g_gen++;
-    s->gen = g_gen;
     ring_reset();
     g_net_done = false;
     g_got_data = false;
@@ -635,25 +674,37 @@ void player_play(const char *url) {
     g_pct = 0;
     g_state = PS_CONNECTING;
     g_active = true;
-    LightLock_Unlock(&lock);
-    snprintf(s->url, sizeof s->url, "%s", url);
-
-    s32 nprio = main_prio + 1;
-    if (nprio > 0x3F) nprio = 0x3F;
-    Thread t = threadCreate(net_main, s, 128 * 1024, nprio, -2, true);
-    if (!t) {
-        LightLock_Lock(&lock);
-        snprintf(g_err, sizeof g_err, "Couldn't start network thread");
-        g_net_done = true;
-        LightLock_Unlock(&lock);
-        free(s);
+    bool busy = g_net_alive >= MAX_NET_THREADS;
+    if (busy) {
+        snprintf(g_pending_url, sizeof g_pending_url, "%s", url);
+        g_pending = true;
+    } else {
+        g_pending = false;
     }
+    LightLock_Unlock(&lock);
+    if (!busy) start_net(url);
 }
+
+void player_tick(void) {
+    if (!g_pending) return;
+    char url[512];
+    LightLock_Lock(&lock);
+    bool go = g_pending && g_active && g_net_alive < MAX_NET_THREADS;
+    if (go) {
+        snprintf(url, sizeof url, "%s", g_pending_url);
+        g_pending = false;
+    }
+    LightLock_Unlock(&lock);
+    if (go) start_net(url);
+}
+
+void player_set_suspended(bool on) { g_suspended = on; }
 
 void player_stop(void) {
     LightLock_Lock(&lock);
     g_gen++;
     g_active = false;
+    g_pending = false;
     ring_reset();
     g_net_done = true;
     g_state = PS_STOPPED;

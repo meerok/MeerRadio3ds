@@ -12,6 +12,7 @@
  *   SELECT .......... screens off (any button turns them back on)
  *   START ........... exit
  *   Touch ........... tap stations, tabs, buttons; drag to scroll
+ *   Country button .. opens the country picker (picking one rescans)
  */
 #include <3ds.h>
 #include <citro2d.h>
@@ -23,6 +24,7 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include "countries.h"
 #include "player.h"
 #include "stations.h"
 #include "ui.h"
@@ -67,8 +69,43 @@ static bool  t_drag = false;
 static int   t_start_y = 0, t_last_y = 0;
 static touchPosition t_last;
 
-static const char *COUNTRIES[] = { "CA", "US", "GB", "AU", "NZ", "IE", "DE", "FR", "ES", "IT", "NL", "BR", "MX", "JP", "IN", "ZA" };
-#define NCOUNTRIES (int)(sizeof(COUNTRIES) / sizeof(COUNTRIES[0]))
+/* country picker */
+static bool  picker_open = false;
+static int   pk_sel = 0;
+static float pk_scroll = 0, pk_vel = 0;
+static bool  pk_drag = false, pk_touch = false;
+static int   pk_start_y = 0, pk_last_y = 0;
+static touchPosition pk_last;
+#define PK_Y0  44
+#define PK_Y1  206
+#define PK_ROW 20
+
+/* HOME Menu / sleep */
+static aptHookCookie apt_cookie;
+static volatile bool resume_wanted = false, was_playing = false;
+
+/* ------------------------------------------------------------------ log */
+/* A small log on the SD card, so a crash report can say what was going on */
+#define LOG_FILE APP_DIR "/log.txt"
+static void logf_(const char *fmt, ...) {
+    FILE *f = fopen(LOG_FILE, "a");
+    if (!f) return;
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    if (t) fprintf(f, "%02d:%02d:%02d ", t->tm_hour, t->tm_min, t->tm_sec);
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+static void log_reset(void) {
+    FILE *f = fopen(LOG_FILE, "r");
+    long sz = 0;
+    if (f) { fseek(f, 0, SEEK_END); sz = ftell(f); fclose(f); }
+    if (sz > 64 * 1024) remove(LOG_FILE);
+}
 
 /* ------------------------------------------------------------------------ */
 
@@ -112,6 +149,7 @@ static void tune_to(int idx) {
     if (idx < 0 || idx >= g_nst) return;
     if (!audio_ok) { show_toast("AUDIO NOT AVAILABLE"); return; }
     cur = idx;
+    logf_("tune %s %.1f %s", g_st[idx].band == BAND_FM ? "FM" : "AM", g_st[idx].freq, g_st[idx].url);
     player_play(g_st[idx].url);
     snprintf(g_set.last, sizeof g_set.last, "%s", g_st[idx].url);
     settings_save();
@@ -164,7 +202,53 @@ static void change_volume(float d) {
 static void start_scan(void) {
     if (scan_state() == SCAN_RUNNING) return;
     if (!net_ok) { show_toast("NO NETWORK"); return; }
+    logf_("scan %s", g_set.country);
     scan_start();
+}
+
+/* switching country throws away the old scan and loads the new one */
+static void set_country(const char *code) {
+    if (!strcasecmp(code, g_set.country) && scan_has_cache()) return;
+    snprintf(g_set.country, sizeof g_set.country, "%s", code);
+    settings_save();
+    if (scan_state() == SCAN_RUNNING) return;
+    char keep[384];
+    snprintf(keep, sizeof keep, "%s", cur >= 0 ? g_st[cur].url : "");
+    scan_clear();
+    cur = station_find_url(keep);
+    rebuild_view();
+    scroll = 0;
+    start_scan();
+}
+
+static void open_picker(void) {
+    picker_open = true;
+    pk_sel = country_index(g_set.country);
+    if (pk_sel < 0) pk_sel = 0;
+    float area = PK_Y1 - PK_Y0;
+    pk_scroll = pk_sel * PK_ROW - area / 2 + PK_ROW / 2;
+    pk_vel = 0;
+    pk_touch = false;
+}
+
+static void apt_hook(APT_HookType hook, void *param) {
+    (void)param;
+    switch (hook) {
+        case APTHOOK_ONSUSPEND:
+        case APTHOOK_ONSLEEP:
+            was_playing = is_playing() && cur >= 0;
+            player_set_suspended(true);
+            player_stop();
+            break;
+        case APTHOOK_ONRESTORE:
+        case APTHOOK_ONWAKEUP:
+            player_set_suspended(false);
+            if (was_playing) resume_wanted = true;
+            was_playing = false;
+            break;
+        default:
+            break;
+    }
 }
 
 static void set_screens(bool on) {
@@ -586,7 +670,7 @@ static void draw_scan_overlay(void) {
     ui_icon(IC_SCAN, 60, 86, 2, C_YELLOW, false);
     ui_text(92, 88, "SCANNING", 2, C_WHITE);
     char l[48];
-    snprintf(l, sizeof l, "COUNTRY: %s", g_set.country);
+    snprintf(l, sizeof l, "%s", country_name(g_set.country));
     ui_text(92, 106, l, 1, C_LGRAY);
     /* spinner */
     for (int i = 0; i < 8; i++) {
@@ -600,7 +684,97 @@ static void draw_scan_overlay(void) {
     ui_text_clip(52, 118, scan_msg(), 1, C_SKY, 52, 270);
 }
 
+static float pk_max(void) {
+    float m = (float)(COUNTRY_COUNT * PK_ROW) - (PK_Y1 - PK_Y0);
+    return m > 0 ? m : 0;
+}
+
+static void draw_picker(void) {
+    ui_rect(0, 0, 320, 240, C_BLACK);
+    for (int i = 0; i < COUNTRY_COUNT; i++) {
+        float y = PK_Y0 + i * PK_ROW - pk_scroll;
+        if (y + PK_ROW < PK_Y0 || y > PK_Y1) continue;
+        bool is_sel = i == pk_sel, is_cur = !strcasecmp(COUNTRY_LIST[i].code, g_set.country);
+        ui_rect(0, y, 316, PK_ROW, is_sel ? C_DGRAY : ((i & 1) ? RGB(31, 34, 54) : C_BLACK));
+        if (is_sel) ui_rect(0, y, 3, PK_ROW, C_YELLOW);
+        ui_text(10, y + 4, COUNTRY_LIST[i].code, 2, is_cur ? C_YELLOW : C_ORANGE);
+        ui_text(46, y + 7, COUNTRY_LIST[i].name, 1, is_sel ? C_WHITE : C_LGRAY);
+        if (is_cur) ui_text(262, y + 7, "CURRENT", 1, C_GREEN);
+    }
+    float ms = pk_max();
+    if (ms > 0) {
+        float area = PK_Y1 - PK_Y0;
+        float th = area * area / (COUNTRY_COUNT * PK_ROW);
+        float ty = PK_Y0 + (pk_scroll / ms) * (area - th);
+        ui_rect(316, PK_Y0, 4, area, C_BLACK);
+        ui_rect(317, ty, 2, th, C_GRAY);
+    }
+    ui_rect(0, 0, 320, PK_Y0 - 2, C_NAVY);
+    ui_rect(0, PK_Y0 - 2, 320, 2, C_BLUE);
+    ui_text(8, 6, "PICK YOUR COUNTRY", 2, C_WHITE);
+    ui_text(8, 26, "Picking one scans its AM/FM stations", 1, C_LGRAY);
+    ui_rect(0, PK_Y1, 320, 240 - PK_Y1, C_DGRAY);
+    ui_rect(0, PK_Y1, 320, 1, C_GRAY);
+    ui_text(8, PK_Y1 + 13, "A/TAP: PICK", 1, C_WHITE);
+    ui_text(110, PK_Y1 + 13, "B: CANCEL", 1, C_WHITE);
+    ui_text(200, PK_Y1 + 13, "L/R: PAGE", 1, C_WHITE);
+}
+
+static void picker_input(u32 kd, u32 kh, u32 ku, u32 kr) {
+    int page = (int)((PK_Y1 - PK_Y0) / PK_ROW);
+    bool moved = false;
+    if (kr & KEY_DOWN) { if (pk_sel < COUNTRY_COUNT - 1) pk_sel++; moved = true; }
+    if (kr & KEY_UP) { if (pk_sel > 0) pk_sel--; moved = true; }
+    if (kr & KEY_R) { pk_sel += page; if (pk_sel > COUNTRY_COUNT - 1) pk_sel = COUNTRY_COUNT - 1; moved = true; }
+    if (kr & KEY_L) { pk_sel -= page; if (pk_sel < 0) pk_sel = 0; moved = true; }
+    if (moved) pk_vel = 0;
+    if (kd & KEY_B) { picker_open = false; return; }
+    if (kd & KEY_A) { picker_open = false; set_country(COUNTRY_LIST[pk_sel].code); return; }
+
+    touchPosition tp;
+    hidTouchRead(&tp);
+    if (kd & KEY_TOUCH) {
+        pk_touch = tp.py >= PK_Y0 && tp.py < PK_Y1;
+        pk_drag = false;
+        pk_start_y = pk_last_y = tp.py;
+        pk_last = tp;
+        pk_vel = 0;
+    } else if ((kh & KEY_TOUCH) && pk_touch) {
+        int dy = tp.py - pk_last_y;
+        if (!pk_drag && abs(tp.py - pk_start_y) > 6) pk_drag = true;
+        if (pk_drag) { pk_scroll -= dy; pk_vel = (float)-dy; }
+        pk_last_y = tp.py;
+        pk_last = tp;
+    } else if ((ku & KEY_TOUCH) && pk_touch) {
+        pk_touch = false;
+        if (!pk_drag) {
+            int row = (int)((pk_last.py - PK_Y0 + pk_scroll) / PK_ROW);
+            if (row >= 0 && row < COUNTRY_COUNT) {
+                pk_sel = row;
+                picker_open = false;
+                set_country(COUNTRY_LIST[row].code);
+                return;
+            }
+        }
+    }
+
+    if (!(kh & KEY_TOUCH)) {
+        pk_scroll += pk_vel;
+        pk_vel *= 0.9f;
+        if (fabsf(pk_vel) < 0.05f) pk_vel = 0;
+        if (moved) {
+            float area = PK_Y1 - PK_Y0, sy = (float)pk_sel * PK_ROW;
+            if (sy < pk_scroll) pk_scroll = sy;
+            if (sy + PK_ROW > pk_scroll + area) pk_scroll = sy + PK_ROW - area;
+        }
+        float ms = pk_max();
+        if (pk_scroll < 0) pk_scroll += (0 - pk_scroll) * 0.35f;
+        if (pk_scroll > ms) pk_scroll += (ms - pk_scroll) * 0.35f;
+    }
+}
+
 static void draw_bottom(void) {
+    if (picker_open) { draw_picker(); return; }
     ui_rect(0, 0, 320, 240, C_BLACK);
     draw_list();
     draw_header();
@@ -628,15 +802,7 @@ static int hit_test(int x, int y) {
 static void activate(int target, touchPosition tp) {
     switch (target) {
         case T_TAB0: case T_TAB1: case T_TAB2: set_band(target - T_TAB0); break;
-        case T_COUNTRY: {
-            int ci = 0;
-            for (int i = 0; i < NCOUNTRIES; i++) if (!strcmp(COUNTRIES[i], g_set.country)) ci = i;
-            ci = (ci + 1) % NCOUNTRIES;
-            snprintf(g_set.country, sizeof g_set.country, "%s", COUNTRIES[ci]);
-            settings_save();
-            show_toast("COUNTRY %s - TAP SCAN TO LOAD", g_set.country);
-            break;
-        }
+        case T_COUNTRY: open_picker(); break;
         case T_LIST: {
             int row = (int)((tp.py - LIST_Y0 + scroll) / ROW_H);
             if (row >= 0 && row < nview) {
@@ -698,7 +864,17 @@ int main(void) {
 
     ui_init();
     stations_init();
+    log_reset();
+    logf_("start (net %d)", net_ok ? 1 : 0);
+    if (g_first_run) {
+        const char *sys = country_from_system();
+        if (sys) snprintf(g_set.country, sizeof g_set.country, "%s", sys);
+        settings_save();
+        logf_("first run, country %s", g_set.country);
+    }
+    aptHook(&apt_cookie, apt_hook, NULL);
     audio_ok = player_init();
+    if (!audio_ok) logf_("audio init failed");
     player_set_volume(g_set.volume);
     player_set_static(g_set.static_on);
 
@@ -740,11 +916,37 @@ int main(void) {
             int n = scan_collect();
             cur = station_find_url(keep);
             rebuild_view();
-            if (ok) show_toast("FOUND %d STATIONS", n);
+            logf_("scan done: %s (%d added)", m, n);
+            if (ok && n > 0) show_toast("FOUND %d STATIONS IN %s", n, g_set.country);
+            else if (ok) show_toast("NO MP3 AM/FM STATIONS FOUND FOR %s", g_set.country);
             else show_toast("%s", m);
         }
 
-        if (scan_state() != SCAN_RUNNING) {
+        player_tick();
+        if (resume_wanted) {
+            resume_wanted = false;
+            logf_("resume after HOME/sleep");
+            if (cur >= 0) tune_to(cur);
+        }
+
+        /* log state changes, errors included */
+        static PlayerState last_ps = PS_STOPPED;
+        PlayerState ps_now = player_state();
+        if (ps_now != last_ps) {
+            if (ps_now == PS_ERROR) {
+                char e[128];
+                player_get_error(e, sizeof e);
+                logf_("error: %s", e);
+            } else if (ps_now == PS_PLAYING) {
+                logf_("playing (%d kbps, %d ch)", player_bitrate(), player_channels());
+            }
+            last_ps = ps_now;
+        }
+
+        if (picker_open && scan_state() != SCAN_RUNNING) {
+            picker_input(kd, kh, ku, kr);
+            if (kd & KEY_SELECT) { screens_off = true; set_screens(false); }
+        } else if (scan_state() != SCAN_RUNNING) {
             if (kr & KEY_DOWN) { if (sel < nview - 1) sel++; follow = true; }
             if (kr & KEY_UP) { if (sel > 0) sel--; follow = true; }
             if (kr & KEY_CPAD_DOWN) { if (sel < nview - 1) sel++; follow = true; }
@@ -808,6 +1010,8 @@ int main(void) {
         C3D_FrameEnd(0);
     }
 
+    logf_("exit");
+    aptUnhook(&apt_cookie);
     settings_save();
     player_exit();
     set_screens(true);

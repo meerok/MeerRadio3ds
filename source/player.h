@@ -25,3 +25,5 @@ void        player_get_error(char *out, size_t n);
 void        player_set_volume(float v);
 void        player_set_static(bool on);
 void        player_get_levels(float out[VIS_BANDS]);
+void        player_tick(void);              /* call once per frame */
+void        player_set_suspended(bool on);  /* true while in the HOME Menu or asleep */

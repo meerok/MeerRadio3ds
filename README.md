@@ -56,7 +56,7 @@ The 3DS has no AM/FM radio chip, so Meer Radio plays real AM and FM stations fro
 | 🎵 **Now playing** | Song titles from the station scroll across the LCD |
 | 📊 **Visualizer** | 16-band spectrum meter with peak caps and a speaker grille that pulses with the bass |
 | 🌫️ **Tuning static** | Soft static while a station locks on, like a real radio |
-| 🌙 **Lid closed** | Keeps playing with the lid shut and switches the screens off |
+| 🎧 **Lid closed** | Keeps playing with the lid shut when headphones are plugged in (the 3DS turns its speakers off when closed) |
 | 💾 **Remembers** | Volume, favorites, country and your last station |
 
 ## Controls
@@ -70,7 +70,7 @@ The 3DS has no AM/FM radio chip, so Meer Radio plays real AM and FM stations fro
 | X | Favorite on/off |
 | Y | Switch band: FM, AM, FAV |
 | L / R | Volume down / up |
-| SELECT | Screens off (any button turns them back on) |
+| SELECT (on its own) | Screens off (any button turns them back on). Luma's L + Down + SELECT still opens Rosalina |
 | START | Exit |
 | Touch | Tap stations, tabs and buttons. Drag the list to scroll |
 

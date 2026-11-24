@@ -49,6 +49,7 @@ static const char *DEFAULT_STATIONS[] = {
     "FM|98.1|Classical KING FM|http://classicalking.streamguys1.com/king-fm-mp3|US",
     "FM|105.9|WQXR New York|https://stream.wqxr.org/wqxr|US",
     "FM|100.9|Classic FM|http://ice-sov.musicradio.com/ClassicFMMP3|GB",
+    "FM|97.7|97.7 HTZ-FM St. Catharines|https://playerservices.streamtheworld.com/api/livestream-redirect/CHTZFM_SC|CA",
 };
 #define N_DEFAULTS (int)(sizeof(DEFAULT_STATIONS) / sizeof(DEFAULT_STATIONS[0]))
 

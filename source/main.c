@@ -244,10 +244,12 @@ static void apt_hook(APT_HookType hook, void *param) {
         case APTHOOK_ONSLEEP:
             was_playing = is_playing() && cur >= 0;
             player_set_suspended(true);
+            logf_(hook == APTHOOK_ONSLEEP ? "going to sleep" : "HOME pressed, pausing");
             break;
         case APTHOOK_ONRESTORE:
         case APTHOOK_ONWAKEUP:
             player_set_suspended(false);
+            logf_(hook == APTHOOK_ONWAKEUP ? "woke up" : "back from HOME");
             if (was_playing) resume_wanted = true;
             if (hook == APTHOOK_ONWAKEUP) woke_up = true;
             was_playing = false;
@@ -257,9 +259,13 @@ static void apt_hook(APT_HookType hook, void *param) {
     }
 }
 
+/* The LCD service is opened only for the moment it's needed: holding it open
+ * the whole time can stop the HOME Menu from getting it. */
 static void set_screens(bool on) {
+    if (R_FAILED(gspLcdInit())) return;
     if (on) GSPLCD_PowerOnBacklight(GSPLCD_SCREEN_BOTH);
     else GSPLCD_PowerOffBacklight(GSPLCD_SCREEN_BOTH);
+    gspLcdExit();
 }
 
 /* ================================================================ TOP === */
@@ -863,7 +869,6 @@ int main(void) {
     bot = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 
     ptmuInit();
-    gspLcdInit();
 
     u32 *soc_buf = (u32 *)memalign(0x1000, SOC_BUFSIZE);
     net_ok = soc_buf && R_SUCCEEDED(socInit(soc_buf, SOC_BUFSIZE));
@@ -1014,7 +1019,11 @@ int main(void) {
             }
             u8 shell = 1;
             if (R_SUCCEEDED(PTMU_GetShellState(&shell))) {
-                if (shell == 0 && !lid_off) { lid_off = true; set_screens(false); }
+                if (shell == 0 && !lid_off) {
+                    lid_off = true;
+                    set_screens(false);
+                    logf_("lid shut (playing %d, headphones %d)", is_playing() ? 1 : 0, headphones ? 1 : 0);
+                }
                 else if (shell == 1 && lid_off) { lid_off = false; if (!screens_off) set_screens(true); }
             }
         }
@@ -1042,7 +1051,6 @@ int main(void) {
     set_screens(true);
     aptSetSleepAllowed(true);
     if (net_ok) socExit();
-    gspLcdExit();
     ptmuExit();
     C2D_Fini();
     C3D_Fini();

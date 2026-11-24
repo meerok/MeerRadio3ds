@@ -605,8 +605,11 @@ bool player_init(void) {
     }
 
     svcGetThreadPriority(&main_prio, CUR_THREAD_HANDLE);
-    s32 dprio = main_prio - 1;
-    if (dprio < 0x18) dprio = 0x18;
+    /* Below the main thread, so the app can always answer the system (HOME,
+     * power button, sleep) even while audio is busy. Six buffers of headroom
+     * keep playback smooth. */
+    s32 dprio = main_prio + 1;
+    if (dprio > 0x3F) dprio = 0x3F;
     /* Decoding stays on the app core. A thread on the New 3DS's extra core can be
      * paused by the system while it holds a lock when you press HOME, which froze
      * the whole console. MP3 decoding is light enough for the app core. */
@@ -648,7 +651,7 @@ static void start_net(const char *url) {
     LightLock_Unlock(&lock);
     snprintf(s->url, sizeof s->url, "%s", url);
 
-    s32 nprio = main_prio + 1;
+    s32 nprio = main_prio + 2;
     if (nprio > 0x3F) nprio = 0x3F;
     Thread t = threadCreate(net_main, s, NET_STACK, nprio, -2, true);
     if (!t) {

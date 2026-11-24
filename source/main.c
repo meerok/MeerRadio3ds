@@ -82,7 +82,9 @@ static touchPosition pk_last;
 
 /* HOME Menu / sleep */
 static aptHookCookie apt_cookie;
-static volatile bool resume_wanted = false, was_playing = false;
+static volatile bool resume_wanted = false, was_playing = false, woke_up = false;
+static bool  headphones = false;
+static bool  sel_armed = false;   /* SELECT pressed on its own (not part of Luma's L+Down+SELECT) */
 
 /* ------------------------------------------------------------------ log */
 /* A small log on the SD card, so a crash report can say what was going on */
@@ -232,6 +234,9 @@ static void open_picker(void) {
     pk_touch = false;
 }
 
+/* Runs inside aptMainLoop when HOME is pressed or the console sleeps. It only
+ * flips flags: taking a lock here can deadlock against the audio threads and
+ * freeze the console. The main loop restarts the station afterwards. */
 static void apt_hook(APT_HookType hook, void *param) {
     (void)param;
     switch (hook) {
@@ -239,12 +244,12 @@ static void apt_hook(APT_HookType hook, void *param) {
         case APTHOOK_ONSLEEP:
             was_playing = is_playing() && cur >= 0;
             player_set_suspended(true);
-            player_stop();
             break;
         case APTHOOK_ONRESTORE:
         case APTHOOK_ONWAKEUP:
             player_set_suspended(false);
             if (was_playing) resume_wanted = true;
+            if (hook == APTHOOK_ONWAKEUP) woke_up = true;
             was_playing = false;
             break;
         default:
@@ -873,9 +878,11 @@ int main(void) {
         settings_save();
         logf_("first run, country %s", g_set.country);
     }
-    aptHook(&apt_cookie, apt_hook, NULL);
     audio_ok = player_init();
     if (!audio_ok) logf_("audio init failed");
+    /* hooked after the sound system so ours runs first and pauses decoding
+     * before the DSP is handed back to the HOME Menu */
+    aptHook(&apt_cookie, apt_hook, NULL);
     player_set_volume(g_set.volume);
     player_set_static(g_set.static_on);
 
@@ -928,7 +935,16 @@ int main(void) {
             resume_wanted = false;
             logf_("resume after HOME/sleep");
             if (cur >= 0) tune_to(cur);
+            if (woke_up && !headphones) show_toast("PLUG IN HEADPHONES TO LISTEN WITH THE LID SHUT");
         }
+        woke_up = false;
+
+        /* SELECT = screens off, but only when pressed and released on its own,
+         * so Luma's Rosalina shortcut (L + Down + SELECT) doesn't trigger it */
+        if (kd & KEY_SELECT) sel_armed = (kh & ~(u32)(KEY_SELECT | KEY_TOUCH)) == 0;
+        else if ((kh & KEY_SELECT) && (kh & ~(u32)(KEY_SELECT | KEY_TOUCH))) sel_armed = false;
+        bool select_tap = sel_armed && (ku & KEY_SELECT);
+        if (ku & KEY_SELECT) sel_armed = false;
 
         /* log state changes, errors included */
         static PlayerState last_ps = PS_STOPPED;
@@ -946,7 +962,7 @@ int main(void) {
 
         if (picker_open && scan_state() != SCAN_RUNNING) {
             picker_input(kd, kh, ku, kr);
-            if (kd & KEY_SELECT) { screens_off = true; set_screens(false); }
+            if (select_tap) { screens_off = true; set_screens(false); }
         } else if (scan_state() != SCAN_RUNNING) {
             if (kr & KEY_DOWN) { if (sel < nview - 1) sel++; follow = true; }
             if (kr & KEY_UP) { if (sel > 0) sel--; follow = true; }
@@ -963,7 +979,7 @@ int main(void) {
             if (kd & KEY_Y) set_band(vband + 1);
             if (kr & KEY_R) change_volume(0.05f);
             if (kr & KEY_L) change_volume(-0.05f);
-            if (kd & KEY_SELECT) { screens_off = true; set_screens(false); }
+            if (select_tap) { screens_off = true; set_screens(false); }
             handle_touch(kd, kh, ku);
         }
 
@@ -985,18 +1001,26 @@ int main(void) {
             if (scroll > ms) scroll += (ms - scroll) * 0.35f;
         }
 
-        /* keep playing with the lid shut: no sleep while playing, backlight off when closed */
-        bool want_sleep = !is_playing();
-        if (want_sleep != sleep_allowed) { aptSetSleepAllowed(want_sleep); sleep_allowed = want_sleep; }
+        /* Lid shut: the 3DS cuts the speakers, so keep playing (no sleep, screens
+         * off) only when headphones are in. Without them, let it sleep normally
+         * and pick the station back up when the lid opens. */
         shell_t += dt;
         if (shell_t > 0.4f) {
             shell_t = 0;
+            bool hp = false;
+            if (audio_ok && R_SUCCEEDED(DSP_GetHeadphoneStatus(&hp))) {
+                if (hp != headphones) logf_("headphones %s", hp ? "in" : "out");
+                headphones = hp;
+            }
             u8 shell = 1;
             if (R_SUCCEEDED(PTMU_GetShellState(&shell))) {
                 if (shell == 0 && !lid_off) { lid_off = true; set_screens(false); }
                 else if (shell == 1 && lid_off) { lid_off = false; if (!screens_off) set_screens(true); }
             }
         }
+
+        bool want_sleep = !(is_playing() && headphones);
+        if (want_sleep != sleep_allowed) { aptSetSleepAllowed(want_sleep); sleep_allowed = want_sleep; }
 
         if (name_anim < 1) name_anim += dt * 4;
         if (toast_t > 0) toast_t -= dt;

@@ -607,9 +607,10 @@ bool player_init(void) {
     svcGetThreadPriority(&main_prio, CUR_THREAD_HANDLE);
     s32 dprio = main_prio - 1;
     if (dprio < 0x18) dprio = 0x18;
-    /* New 3DS: put decoding on core 2; fall back to the app core on Old 3DS */
-    dec_thread = threadCreate(dec_main, NULL, DEC_STACK, dprio, 2, false);
-    if (!dec_thread) dec_thread = threadCreate(dec_main, NULL, DEC_STACK, dprio, -2, false);
+    /* Decoding stays on the app core. A thread on the New 3DS's extra core can be
+     * paused by the system while it holds a lock when you press HOME, which froze
+     * the whole console. MP3 decoding is light enough for the app core. */
+    dec_thread = threadCreate(dec_main, NULL, DEC_STACK, dprio, -2, false);
     return dec_thread != NULL;
 }
 

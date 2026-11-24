@@ -32,18 +32,25 @@ bool     g_first_run = false;
 static char favs[MAX_FAVS][384];
 static int nfavs = 0;
 
-static const char *DEFAULT_LIST =
+static const char *DEFAULT_HEADER =
     "# Meer Radio station list\n"
-    "# Format: BAND|FREQUENCY|NAME|STREAM URL   (MP3 streams only)\n"
-    "# BAND is FM (MHz) or AM (kHz). Lines starting with # are ignored.\n"
-    "# Tip: press SCAN in the app to pull in hundreds of real AM/FM stations.\n"
-    "FM|88.5|KNKX Seattle-Tacoma|http://live.wostreaming.net/direct/ppm-knkxfmmp3-ibc1\n"
-    "FM|90.3|KEXP Seattle|https://kexp-mp3-128.streamguys1.com/kexp128.mp3\n"
-    "FM|91.1|WFMU Jersey City|http://stream0.wfmu.org/freeform-128k\n"
-    "FM|93.9|WNYC New York|https://fm939.wnyc.org/wnycfm\n"
-    "FM|94.9|KUOW Seattle|http://playerservices.streamtheworld.com/pls/KUOWFM_HIGH_MP3.pls\n"
-    "FM|98.1|Classical KING FM|http://classicalking.streamguys1.com/king-fm-mp3\n"
-    "FM|105.9|WQXR New York|https://stream.wqxr.org/wqxr\n";
+    "# Format: BAND|FREQUENCY|NAME|STREAM URL|COUNTRY   (MP3 streams only)\n"
+    "# BAND is FM (MHz) or AM (kHz). COUNTRY is a 2-letter code like US or GB:\n"
+    "# the station only shows when that country is picked. Leave it off to show it everywhere.\n"
+    "# Lines starting with # are ignored. Tip: SCAN pulls in real AM/FM stations for your country.\n";
+
+/* Presets, each tied to its own country so they don't show up everywhere */
+static const char *DEFAULT_STATIONS[] = {
+    "FM|88.5|KNKX Seattle-Tacoma|http://live.wostreaming.net/direct/ppm-knkxfmmp3-ibc1|US",
+    "FM|90.3|KEXP Seattle|https://kexp-mp3-128.streamguys1.com/kexp128.mp3|US",
+    "FM|91.1|WFMU Jersey City|http://stream0.wfmu.org/freeform-128k|US",
+    "FM|93.9|WNYC New York|https://fm939.wnyc.org/wnycfm|US",
+    "FM|94.9|KUOW Seattle|http://playerservices.streamtheworld.com/pls/KUOWFM_HIGH_MP3.pls|US",
+    "FM|98.1|Classical KING FM|http://classicalking.streamguys1.com/king-fm-mp3|US",
+    "FM|105.9|WQXR New York|https://stream.wqxr.org/wqxr|US",
+    "FM|100.9|Classic FM|http://ice-sov.musicradio.com/ClassicFMMP3|GB",
+};
+#define N_DEFAULTS (int)(sizeof(DEFAULT_STATIONS) / sizeof(DEFAULT_STATIONS[0]))
 
 /* ------------------------------------------------------------ helpers */
 
@@ -155,16 +162,16 @@ bool parse_freq(const char *name, Band *band, float *freq) {
 static bool parse_line(char *line, Station *st) {
     trim(line);
     if (!line[0] || line[0] == '#') return false;
-    char *f[4];
+    char *f[5];
     int nf = 0;
     char *p = line;
     f[nf++] = p;
-    while (*p && nf < 4) {
+    while (*p && nf < 5) {
         if (*p == '|') { *p = 0; f[nf++] = p + 1; }
         p++;
     }
     if (nf < 4) return false;
-    for (int i = 0; i < 4; i++) trim(f[i]);
+    for (int i = 0; i < nf; i++) trim(f[i]);
     memset(st, 0, sizeof *st);
     if (!strcasecmp(f[0], "AM")) st->band = BAND_AM;
     else if (!strcasecmp(f[0], "FM")) st->band = BAND_FM;
@@ -172,6 +179,7 @@ static bool parse_line(char *line, Station *st) {
     st->freq = (float)atof(f[1]);
     fold_ascii(f[2], st->name, sizeof st->name);
     snprintf(st->url, sizeof st->url, "%s", f[3]);
+    if (nf >= 5) for (int i = 0; i < 2 && f[4][i]; i++) st->country[i] = (char)toupper((unsigned char)f[4][i]);
     return st->url[0] && st->freq > 0;
 }
 
@@ -274,11 +282,30 @@ void stations_init(void) {
     mkdir(APP_DIR, 0777);
     settings_load();
     g_nst = 0;
-    if (load_file(STATIONS_FILE, false) < 0) {
+    bool fresh = load_file(STATIONS_FILE, false) < 0;
+    if (fresh) {
         FILE *f = fopen(STATIONS_FILE, "w");
-        if (f) { fputs(DEFAULT_LIST, f); fclose(f); }
-        load_file(STATIONS_FILE, false);
+        if (f) { fputs(DEFAULT_HEADER, f); fclose(f); }
     }
+    /* Presets: tag old copies (written before presets had a country) with their
+     * country, and add any preset this file doesn't have yet. */
+    FILE *app = NULL;
+    for (int d = 0; d < N_DEFAULTS; d++) {
+        char line[600];
+        Station def;
+        snprintf(line, sizeof line, "%s", DEFAULT_STATIONS[d]);
+        if (!parse_line(line, &def)) continue;
+        int have = station_find_url(def.url);
+        if (have >= 0) {
+            if (!g_st[have].country[0]) snprintf(g_st[have].country, sizeof g_st[have].country, "%s", def.country);
+            continue;
+        }
+        if (g_nst >= MAX_STATIONS) break;
+        g_st[g_nst++] = def;
+        if (!app) app = fopen(STATIONS_FILE, "a");
+        if (app) fprintf(app, "%s\n", DEFAULT_STATIONS[d]);
+    }
+    if (app) fclose(app);
     load_file(SCANNED_FILE, true);
     apply_favs();
 }
@@ -500,4 +527,10 @@ int scan_collect(void) {
     }
     s_state = SCAN_IDLE;
     return added;
+}
+
+/* Presets with a country only show when that country is picked */
+bool station_shows(int idx) {
+    const Station *st = &g_st[idx];
+    return st->scanned || !st->country[0] || !strcasecmp(st->country, g_set.country);
 }

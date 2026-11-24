@@ -14,6 +14,7 @@ typedef struct {
     char  url[384];
     bool  fav;
     bool  scanned;
+    char  country[4];   /* presets: only shown for this country, empty = everywhere */
 } Station;
 
 typedef struct {
@@ -31,6 +32,7 @@ extern bool     g_first_run;   /* no settings file yet */
 void stations_init(void);
 void settings_save(void);
 int  station_find_url(const char *url);
+bool station_shows(int idx);
 void station_toggle_fav(int idx);
 void fold_ascii(const char *in, char *out, size_t n);
 bool parse_freq(const char *name, Band *band, float *freq);

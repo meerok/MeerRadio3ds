@@ -129,7 +129,7 @@ static void rebuild_view(void) {
     int keep = (sel >= 0 && sel < nview) ? view[sel] : -1;
     nview = 0;
     for (int i = 0; i < g_nst; i++) {
-        bool in = vband == 2 ? g_st[i].fav : (int)g_st[i].band == vband;
+        bool in = vband == 2 ? g_st[i].fav : ((int)g_st[i].band == vband && station_shows(i));
         if (in) view[nview++] = i;
     }
     qsort(view, (size_t)nview, sizeof(int), cmp_view);
@@ -211,6 +211,7 @@ static void set_country(const char *code) {
     if (!strcasecmp(code, g_set.country) && scan_has_cache()) return;
     snprintf(g_set.country, sizeof g_set.country, "%s", code);
     settings_save();
+    rebuild_view();
     if (scan_state() == SCAN_RUNNING) return;
     char keep[384];
     snprintf(keep, sizeof keep, "%s", cur >= 0 ? g_st[cur].url : "");
@@ -446,7 +447,7 @@ static void draw_dial(float dt) {
 
     /* station markers */
     for (int i = 0; i < g_nst; i++) {
-        if (g_st[i].band != band) continue;
+        if (g_st[i].band != band || !station_shows(i)) continue;
         float sx = FX(g_st[i].freq);
         ui_rect(sx - 1, Y + 35, 2, 3, g_st[i].fav ? C_RED : C_SKY);
     }

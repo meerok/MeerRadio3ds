@@ -50,6 +50,17 @@ static const char *DEFAULT_STATIONS[] = {
     "FM|105.9|WQXR New York|https://stream.wqxr.org/wqxr|US",
     "FM|100.9|Classic FM|http://ice-sov.musicradio.com/ClassicFMMP3|GB",
     "FM|97.7|97.7 HTZ-FM St. Catharines|https://playerservices.streamtheworld.com/api/livestream-redirect/CHTZFM_SC|CA",
+    "FM|92.7|Majic 92.7 WDCJ|https://playerservices.streamtheworld.com/api/livestream-redirect/WDCJFM_SC|US",
+    "FM|93.9|WKYS Washington DC|https://playerservices.streamtheworld.com/api/livestream-redirect/WKYSFM_SC|US",
+    "FM|95.5|WPGC Washington DC|https://live.amperwave.net/direct/audacy-wpgcfmmp3-imc|US",
+    "FM|102.3|Majic 102.3 WMMJ|https://playerservices.streamtheworld.com/api/livestream-redirect/WMMJFM_SC|US",
+    "FM|103.5|WTOP News|https://playerservices.streamtheworld.com/api/livestream-redirect/WTOPFM_SC|US",
+    "FM|105.1|WAVA Washington DC|https://playerservices.streamtheworld.com/api/livestream-redirect/WAVAFM_SC|US",
+    "FM|105.7|WJZ The Fan Baltimore|https://live.amperwave.net/direct/audacy-wjzfmmp3-imc|US",
+    "FM|105.9|WMAL Washington DC|https://playerservices.streamtheworld.com/api/livestream-redirect/WMALFM_SC|US",
+    "FM|106.7|WJFK The Fan|https://live.amperwave.net/direct/audacy-wjfkfmmp3-imc|US",
+    "FM|107.5|BB Radio|https://streambbr.ir-media-tec.com/live/mp3-128/dmhubweb/play.mp3|DE",
+    "FM|104.8|Ostseewelle|https://ostseewelle.stream30.radiohost.de/ostseewelle-nord_mp3-192|DE",
 };
 #define N_DEFAULTS (int)(sizeof(DEFAULT_STATIONS) / sizeof(DEFAULT_STATIONS[0]))
 

@@ -431,6 +431,70 @@ static void compute_levels(int idx, const s16 *s, size_t frames, int chans, int 
     }
 }
 
+/* --------------------------------------------------------- auto level
+ * Some stations stream far below normal loudness (e.g. peaks at -11 dBFS,
+ * ~-25 dB RMS). Track the stream's long-term RMS and gently boost quiet
+ * streams toward a normal level (up to +12 dB). Never turns anything down,
+ * so normal stations pass through untouched; a soft limiter stops clipping.
+ */
+#define AL_TARGET_MS 0.0251f   /* -16 dBFS RMS */
+#define AL_MAX_GAIN  4.0f      /* +12 dB */
+#define AL_SILENCE   1e-5f     /* ignore buffers below -50 dBFS */
+static float al_ms = 0, al_secs = 0, al_gain = 1.0f;
+
+static void auto_level_reset(void) { al_ms = 0; al_secs = 0; al_gain = 1.0f; }
+
+static inline float soft_limit(float y) {
+    const float T = 0.75f, K = 1.0f - T;
+    float a = fabsf(y);
+    if (a <= T) return y;
+    float l = T + K * tanhf((a - T) / K);
+    return y < 0 ? -l : l;
+}
+
+static void auto_level(s16 *s, size_t frames, int chans, int rate) {
+    size_t n = frames * (size_t)chans;
+    if (n == 0 || rate <= 0) return;
+    float sum = 0;
+    for (size_t i = 0; i < n; i++) { float x = s[i] * (1.0f / 32768.0f); sum += x * x; }
+    float ms = sum / (float)n;
+    float dt = (float)frames / (float)rate;
+
+    if (ms > AL_SILENCE) {
+        if (al_secs < 3.0f) {                 /* first seconds: plain average */
+            al_ms = (al_ms * al_secs + ms * dt) / (al_secs + dt);
+        } else {                              /* then a ~8 s moving estimate */
+            float a = dt / 8.0f;
+            al_ms += a * (ms - al_ms);
+        }
+        al_secs += dt;
+    }
+
+    float want = 1.0f;
+    if (al_secs >= 1.5f && al_ms > AL_SILENCE) {
+        want = sqrtf(AL_TARGET_MS / al_ms);
+        if (want < 1.0f) want = 1.0f;
+        if (want > AL_MAX_GAIN) want = AL_MAX_GAIN;
+    }
+    float g0 = al_gain, g1 = want;
+    if (g1 > g0 * 1.02f) g1 = g0 * 1.02f;     /* rise slowly (~+12 dB over ~3 s) */
+    if (g1 < g0 * 0.95f) g1 = g0 * 0.95f;     /* fall a bit faster */
+    al_gain = g1;
+    if (g0 <= 1.0001f && g1 <= 1.0001f) return;   /* normal stream: untouched */
+
+    float step = (g1 - g0) / (float)frames;
+    for (size_t f = 0; f < frames; f++) {
+        float g = g0 + step * (float)f;
+        for (int c = 0; c < chans; c++) {
+            float y = soft_limit(s[f * chans + c] * (1.0f / 32768.0f) * g);
+            int v = (int)(y * 32767.0f);
+            if (v > 32767) v = 32767;
+            if (v < -32768) v = -32768;
+            s[f * chans + c] = (s16)v;
+        }
+    }
+}
+
 static u32 noise_seed = 0x1234567u;
 static float noise_lp = 0, noise_ph = 0;
 
@@ -489,6 +553,7 @@ static void dec_main(void *arg) {
             fmt_known = false;
             errs = 0;
             cur = 0;
+            auto_level_reset();
             if (!g_active) g_state = PS_STOPPED;
         }
         if (!g_active) { svcSleepThread(10 * 1000000LL); continue; }
@@ -574,6 +639,7 @@ static void dec_main(void *arg) {
         /* after a clear_bufs() the current slot may have been reset; that's fine */
         size_t frames = got / ((size_t)chans * 2);
         if (frames > 0) {
+            auto_level(out, frames, chans, rate);
             compute_levels(cur, out, frames, chans, rate);
             queue_buf(cur, frames, chans);
             cur = (cur + 1) % NBUF;
